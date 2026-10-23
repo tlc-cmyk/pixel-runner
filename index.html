@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pixel Runner</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #0a0a12;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-family: "Courier New", Courier, monospace;
+  }
+  canvas {
+    display: block;
+    width: 960px;
+    height: 540px;
+    max-width: 95vw;
+    max-height: 90vh;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #1a1028;
+    border: 4px solid #3a2a50;
+    box-shadow: 0 0 24px #2a1840;
+  }
+  @media (max-width: 1000px) {
+    canvas { width: 100%; height: auto; aspect-ratio: 16 / 9; }
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="480" height="270"></canvas>
+<script>
+(function () {
+  "use strict";
+
+  const W = 480, H = 270;
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+
+  const C = {
+    ground: "#2e1e18",
+    groundTop: "#4a3828",
+    grass: "#3a6840",
+    playerBody: "#e85a3a",
+    playerDark: "#a83820",
+    playerSkin: "#f0c8a0",
+    playerEye: "#1a1020",
+    playerBoot: "#3a2840",
+    playerHair: "#2a1820",
+    spike: "#c8c8d8",
+    spikeDark: "#686878",
+    crate: "#c88840",
+    crateDark: "#885828",
+    crateLine: "#e0a858",
+    blob: "#68c850",
+    blobDark: "#388830",
+    blobEye: "#f8f8f0",
+    coin: "#f8d030",
+    coinDark: "#c89810",
+    star: "#f8f060",
+    starDark: "#d0b020",
+    ui: "#f8f0e0",
+    uiDim: "#a89880",
+    uiAccent: "#f8d030",
+    overlay: "rgba(10,8,24,0.72)",
+    hillFar: "#1a1030",
+    hillNear: "#241840",
+  };
+
+  const STATE = { TITLE: 0, PLAY: 1, OVER: 2 };
+  let state = STATE.TITLE;
+  let scoreBonus = 0;
+  let distScore = 0;
+  let frame = 0;
+  let scroll = 0;
+  let spawnTimer = 0;
+  let coinTimer = 0;
+  let difficulty = 1;
+  let animFrame = 0;
+
+  const keys = { left: false, right: false, jump: false, jumpPressed: false };
+  const player = {
+    x: 80, y: 0, w: 16, h: 20,
+    vx: 0, vy: 0,
+    onGround: false,
+    facing: 1,
+  };
+
+  const GROUND_Y = 230;
+  const GRAVITY = 0.45;
+  const JUMP_V = -7.2;
+  const MOVE_SPEED = 2.4;
+  const SCROLL_BASE = 2.0;
+
+  let obstacles = [];
+  let collectibles = [];
+  let stars = [];
+  let hills = [];
+
+  function makeSprite(w, h, drawFn) {
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const g = c.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    drawFn(g);
+    return c;
+  }
+
+  const sprPlayerRun = [
+    makeSprite(16, 20, (g) => {
+      g.fillStyle = C.playerBody;
+      g.fillRect(4, 6, 8, 8);
+      g.fillStyle = C.playerDark;
+      g.fillRect(4, 12, 8, 2);
+      g.fillStyle = C.playerSkin;
+      g.fillRect(5, 2, 6, 5);
+      g.fillStyle = C.playerHair;
+      g.fillRect(5, 1, 6, 2);
+      g.fillRect(4, 2, 1, 3);
+      g.fillStyle = C.playerEye;
+      g.fillRect(9, 4, 2, 2);
+      g.fillStyle = C.playerSkin;
+      g.fillRect(2, 7, 2, 4);
+      g.fillRect(12, 8, 2, 3);
+      g.fillStyle = C.playerBoot;
+      g.fillRect(5, 14, 3, 5);
+      g.fillRect(10, 14, 3, 4);
+      g.fillRect(4, 18, 4, 2);
+      g.fillRect(10, 17, 4, 2);
+    }),
+    makeSprite(16, 20, (g) => {
+      g.fillStyle = C.playerBody;
+      g.fillRect(4, 6, 8, 8);
+      g.fillStyle = C.playerDark;
+      g.fillRect(4, 12, 8, 2);
+      g.fillStyle = C.playerSkin;
+      g.fillRect(5, 2, 6, 5);
+      g.fillStyle = C.playerHair;
+      g.fillRect(5, 1, 6, 2);
+      g.fillRect(4, 2, 1, 3);
+      g.fillStyle = C.playerEye;
+      g.fillRect(9, 4, 2, 2);
+      g.fillStyle = C.playerSkin;
+      g.fillRect(2, 8, 2, 3);
+      g.fillRect(12, 7, 2, 4);
+      g.fillStyle = C.playerBoot;
+      g.fillRect(4, 14, 3, 4);
+      g.fillRect(9, 14, 3, 5);
+      g.fillRect(3, 17, 4, 2);
+      g.fillRect(9, 18, 4, 2);
+    }),
+  ];
+
+  const sprPlayerJump = makeSprite(16, 20, (g) => {
+    g.fillStyle = C.playerBody;
+    g.fillRect(4, 5, 8, 8);
+    g.fillStyle = C.playerDark;
+    g.fillRect(4, 11, 8, 2);
+    g.fillStyle = C.playerSkin;
+    g.fillRect(5, 1, 6, 5);
+    g.fillStyle = C.playerHair;
+    g.fillRect(5, 0, 6, 2);
+    g.fillRect(4, 1, 1, 3);
+    g.fillStyle = C.playerEye;
+    g.fillRect(9, 3, 2, 2);
+    g.fillStyle = C.playerSkin;
+    g.fillRect(1, 5, 3, 2);
+    g.fillRect(12, 5, 3, 2);
+    g.fillStyle = C.playerBoot;
+    g.fillRect(5, 13, 3, 5);
+    g.fillRect(10, 13, 3, 5);
+    g.fillRect(4, 17, 4, 2);
+    g.fillRect(10, 17, 4, 2);
+  });
+
+  const sprSpike = makeSprite(16, 16, (g) => {
+    g.fillStyle = C.spikeDark;
+    g.fillRect(0, 14, 16, 2);
+    for (let i = 0; i < 3; i++) {
+      const bx = 1 + i * 5;
+      g.fillStyle = C.spike;
+      g.fillRect(bx + 1, 4, 2, 10);
+      g.fillRect(bx, 8, 4, 6);
+      g.fillStyle = C.spikeDark;
+      g.fillRect(bx + 2, 4, 1, 10);
+      g.fillStyle = C.spike;
+      g.fillRect(bx + 1, 2, 2, 2);
+      g.fillRect(bx + 1, 0, 1, 2);
+    }
+  });
+
+  const sprCrate = makeSprite(18, 18, (g) => {
+    g.fillStyle = C.crate;
+    g.fillRect(0, 0, 18, 18);
+    g.fillStyle = C.crateDark;
+    g.fillRect(0, 0, 18, 2);
+    g.fillRect(0, 16, 18, 2);
+    g.fillRect(0, 0, 2, 18);
+    g.fillRect(16, 0, 2, 18);
+    g.fillStyle = C.crateLine;
+    g.fillRect(1, 8, 16, 2);
+    g.fillRect(8, 1, 2, 16);
+    g.fillStyle = C.crateDark;
+    g.fillRect(3, 3, 2, 2);
+    g.fillRect(13, 3, 2, 2);
+    g.fillRect(3, 13, 2, 2);
+    g.fillRect(13, 13, 2, 2);
+  });
+
+  const sprBlob = makeSprite(20, 14, (g) => {
+    g.fillStyle = C.blob;
+    g.fillRect(2, 4, 16, 10);
+    g.fillRect(4, 2, 12, 2);
+    g.fillRect(0, 6, 2, 6);
+    g.fillRect(18, 6, 2, 6);
+    g.fillStyle = C.blobDark;
+    g.fillRect(2, 12, 16, 2);
+    g.fillRect(6, 8, 3, 3);
+    g.fillRect(12, 8, 3, 3);
+    g.fillStyle = C.blobEye;
+    g.fillRect(7, 5, 3, 4);
+    g.fillRect(12, 5, 3, 4);
+    g.fillStyle = C.playerEye;
+    g.fillRect(8, 6, 2, 2);
+    g.fillRect(13, 6, 2, 2);
+  });
+
+  const sprCoin = [
+    makeSprite(10, 10, (g) => {
+      g.fillStyle = C.coinDark;
+      g.fillRect(2, 0, 6, 10);
+      g.fillRect(0, 2, 10, 6);
+      g.fillStyle = C.coin;
+      g.fillRect(3, 1, 4, 8);
+      g.fillRect(1, 3, 8, 4);
+      g.fillStyle = C.coinDark;
+      g.fillRect(4, 3, 2, 4);
+    }),
+    makeSprite(10, 10, (g) => {
+      g.fillStyle = C.coinDark;
+      g.fillRect(3, 0, 4, 10);
+      g.fillStyle = C.coin;
+      g.fillRect(4, 1, 2, 8);
+    }),
+  ];
+
+  const sprStar = makeSprite(12, 12, (g) => {
+    g.fillStyle = C.star;
+    g.fillRect(5, 0, 2, 12);
+    g.fillRect(0, 5, 12, 2);
+    g.fillRect(2, 2, 8, 8);
+    g.fillStyle = C.starDark;
+    g.fillRect(3, 3, 2, 2);
+    g.fillRect(7, 7, 2, 2);
+    g.fillStyle = "#fff8c0";
+    g.fillRect(4, 4, 2, 2);
+  });
+
+  function initStars() {
+    stars = [];
+    for (let i = 0; i < 40; i++) {
+      stars.push({
+        x: Math.random() * W,
+        y: Math.random() * (GROUND_Y - 40),
+        s: Math.random() < 0.3 ? 2 : 1,
+        tw: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+
+  function initHills() {
+    hills = [];
+    for (let layer = 0; layer < 2; layer++) {
+      const pts = [];
+      let x = -40;
+      while (x < W + 80) {
+        pts.push({
+          x,
+          h: 30 + Math.random() * (layer === 0 ? 50 : 70) + layer * 20,
+        });
+        x += 40 + Math.random() * 50;
+      }
+      hills.push({
+        pts,
+        speed: layer === 0 ? 0.15 : 0.4,
+        color: layer === 0 ? C.hillFar : C.hillNear,
+      });
+    }
+  }
+
+  function resetGame() {
+    scoreBonus = 0;
+    distScore = 0;
+    frame = 0;
+    scroll = 0;
+    spawnTimer = 60;
+    coinTimer = 40;
+    difficulty = 1;
+    animFrame = 0;
+    player.x = 80;
+    player.y = GROUND_Y - player.h;
+    player.vx = 0;
+    player.vy = 0;
+    player.onGround = true;
+    player.facing = 1;
+    obstacles = [];
+    collectibles = [];
+    initStars();
+    initHills();
+  }
+
+  function totalScore() {
+    return Math.floor(distScore) + scoreBonus;
+  }
+
+  const jumpKeys = new Set([" ", "Space", "ArrowUp", "w", "W"]);
+  window.addEventListener("keydown", (e) => {
+    const k = e.key;
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " "].includes(k)) {
+      e.preventDefault();
+    }
+    if (k === "ArrowLeft" || k === "a" || k === "A") keys.left = true;
+    if (k === "ArrowRight" || k === "d" || k === "D") keys.right = true;
+    if (jumpKeys.has(k)) {
+      if (!keys.jump) keys.jumpPressed = true;
+      keys.jump = true;
+    }
+    if (state === STATE.TITLE && (k === " " || k === "Enter")) {
+      resetGame();
+      state = STATE.PLAY;
+    } else if (state === STATE.OVER && (k === "r" || k === "R" || k === " " || k === "Enter")) {
+      resetGame();
+      state = STATE.PLAY;
+    }
+  });
+  window.addEventListener("keyup", (e) => {
+    const k = e.key;
+    if (k === "ArrowLeft" || k === "a" || k === "A") keys.left = false;
+    if (k === "ArrowRight" || k === "d" || k === "D") keys.right = false;
+    if (jumpKeys.has(k)) {
+      keys.jump = false;
+      keys.jumpPressed = false;
+    }
+  });
+
+  function spawnObstacle() {
+    const types = ["spike", "crate", "blob"];
+    const t = types[(Math.random() * types.length) | 0];
+    let w = 16, h = 16, y = GROUND_Y - 16;
+    if (t === "crate") {
+      w = 18; h = 18; y = GROUND_Y - 18;
+      if (Math.random() < 0.25) y = GROUND_Y - 18 - 40 - Math.random() * 20;
+    } else if (t === "blob") {
+      w = 20; h = 14; y = GROUND_Y - 14;
+    }
+    obstacles.push({ type: t, x: W + 10, y, w, h });
+  }
+
+  function spawnCollectible() {
+    const isStar = Math.random() < 0.25;
+    collectibles.push({
+      type: isStar ? "star" : "coin",
+      x: W + 10,
+      y: GROUND_Y - 20 - Math.random() * 70,
+      w: isStar ? 12 : 10,
+      h: isStar ? 12 : 10,
+      value: isStar ? 50 : 10,
+      bob: Math.random() * Math.PI * 2,
+    });
+  }
+
+  function aabb(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function playerHitbox() {
+    return { x: player.x + 3, y: player.y + 2, w: player.w - 6, h: player.h - 3 };
+  }
+
+  function update() {
+    frame++;
+    if (state !== STATE.PLAY) {
+      keys.jumpPressed = false;
+      return;
+    }
+
+    difficulty = 1 + Math.min(2.5, distScore / 800);
+    const scrollSpeed = SCROLL_BASE * difficulty;
+    scroll += scrollSpeed;
+    distScore += scrollSpeed * 0.08;
+
+    player.vx = 0;
+    if (keys.left) { player.vx = -MOVE_SPEED; player.facing = -1; }
+    if (keys.right) { player.vx = MOVE_SPEED; player.facing = 1; }
+    player.x += player.vx;
+    if (player.x < 8) player.x = 8;
+    if (player.x > W - player.w - 8) player.x = W - player.w - 8;
+
+    if (keys.jumpPressed && player.onGround) {
+      player.vy = JUMP_V;
+      player.onGround = false;
+    }
+    keys.jumpPressed = false;
+
+    player.vy += GRAVITY;
+    if (player.vy > 10) player.vy = 10;
+    player.y += player.vy;
+
+    if (player.y + player.h >= GROUND_Y) {
+      player.y = GROUND_Y - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    } else {
+      player.onGround = false;
+    }
+
+    for (const o of obstacles) {
+      if (o.type !== "crate") continue;
+      const ph = playerHitbox();
+      const wasAbove = player.y + player.h - player.vy <= o.y + 2;
+      if (
+        wasAbove && player.vy >= 0 &&
+        ph.x + ph.w > o.x + 2 && ph.x < o.x + o.w - 2 &&
+        player.y + player.h >= o.y && player.y + player.h <= o.y + 10
+      ) {
+        player.y = o.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+      }
+    }
+
+    if (frame % 6 === 0) animFrame = (animFrame + 1) % 2;
+
+    spawnTimer--;
+    if (spawnTimer <= 0) {
+      spawnObstacle();
+      spawnTimer = Math.max(40, 90 - difficulty * 15) + Math.random() * 40;
+    }
+    coinTimer--;
+    if (coinTimer <= 0) {
+      spawnCollectible();
+      coinTimer = 50 + Math.random() * 50;
+    }
+
+    for (const o of obstacles) o.x -= scrollSpeed;
+    for (const c of collectibles) {
+      c.x -= scrollSpeed;
+      c.bob += 0.12;
+    }
+    obstacles = obstacles.filter((o) => o.x + o.w > -20);
+    collectibles = collectibles.filter((c) => c.x + c.w > -20);
+
+    const ph = playerHitbox();
+    for (const o of obstacles) {
+      let hit = { x: o.x + 2, y: o.y + 2, w: o.w - 4, h: o.h - 2 };
+      if (o.type === "spike") hit = { x: o.x + 1, y: o.y + 2, w: o.w - 2, h: o.h - 2 };
+      if (aabb(ph, hit)) {
+        state = STATE.OVER;
+        return;
+      }
+    }
+
+    for (let i = collectibles.length - 1; i >= 0; i--) {
+      const c = collectibles[i];
+      const cy = c.y + Math.sin(c.bob) * 3;
+      if (aabb(ph, { x: c.x, y: cy, w: c.w, h: c.h })) {
+        scoreBonus += c.value;
+        collectibles.splice(i, 1);
+      }
+    }
+  }
+
+  function drawBg() {
+    const bands = 8;
+    for (let i = 0; i < bands; i++) {
+      const t = i / (bands - 1);
+      const r = (0x0c * (1 - t) + 0x2a * t) | 0;
+      const g = (0x08 * (1 - t) + 0x18 * t) | 0;
+      const b = (0x20 * (1 - t) + 0x48 * t) | 0;
+      ctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
+      ctx.fillRect(0, (H * i) / bands, W, H / bands + 1);
+    }
+
+    for (const s of stars) {
+      const tw = 0.4 + 0.6 * Math.abs(Math.sin(frame * 0.03 + s.tw));
+      ctx.globalAlpha = tw;
+      ctx.fillStyle = "#e8e0f8";
+      ctx.fillRect(s.x | 0, s.y | 0, s.s, s.s);
+    }
+    ctx.globalAlpha = 1;
+
+    for (const layer of hills) {
+      const off = (scroll * layer.speed) % 200;
+      ctx.fillStyle = layer.color;
+      ctx.beginPath();
+      ctx.moveTo(-20, GROUND_Y);
+      for (const p of layer.pts) {
+        ctx.lineTo(p.x - off, GROUND_Y - p.h);
+      }
+      ctx.lineTo(W + 20, GROUND_Y);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.fillStyle = C.ground;
+    ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+    ctx.fillStyle = C.groundTop;
+    ctx.fillRect(0, GROUND_Y, W, 4);
+    ctx.fillStyle = C.grass;
+    ctx.fillRect(0, GROUND_Y, W, 2);
+    ctx.fillStyle = "#241810";
+    for (let x = -((scroll * 0.5) % 16); x < W; x += 16) {
+      ctx.fillRect(x, GROUND_Y + 8, 8, 2);
+      ctx.fillRect(x + 6, GROUND_Y + 16, 6, 2);
+    }
+  }
+
+  function drawPlayer() {
+    const spr = player.onGround ? sprPlayerRun[animFrame] : sprPlayerJump;
+    ctx.save();
+    if (player.facing < 0) {
+      ctx.translate(player.x + player.w, player.y);
+      ctx.scale(-1, 1);
+      ctx.drawImage(spr, 0, 0);
+    } else {
+      ctx.drawImage(spr, player.x, player.y);
+    }
+    ctx.restore();
+  }
+
+  function drawObstacles() {
+    for (const o of obstacles) {
+      if (o.type === "spike") ctx.drawImage(sprSpike, o.x, o.y);
+      else if (o.type === "crate") ctx.drawImage(sprCrate, o.x, o.y);
+      else ctx.drawImage(sprBlob, o.x, o.y);
+    }
+  }
+
+  function drawCollectibles() {
+    for (const c of collectibles) {
+      const cy = c.y + Math.sin(c.bob) * 3;
+      if (c.type === "star") ctx.drawImage(sprStar, c.x, cy);
+      else ctx.drawImage(sprCoin[animFrame], c.x, cy);
+    }
+  }
+
+  function drawUI() {
+    ctx.fillStyle = C.ui;
+    ctx.font = "bold 12px Courier New, monospace";
+    ctx.textAlign = "left";
+    ctx.fillText("SCORE " + String(totalScore()).padStart(6, "0"), 8, 16);
+    if (state === STATE.PLAY) {
+      ctx.fillStyle = C.uiDim;
+      ctx.font = "10px Courier New, monospace";
+      ctx.textAlign = "right";
+      ctx.fillText("x" + difficulty.toFixed(1), W - 8, 16);
+    }
+  }
+
+  function drawCenteredText(lines, y0) {
+    ctx.textAlign = "center";
+    let y = y0;
+    for (const line of lines) {
+      ctx.font = line.font || "12px Courier New, monospace";
+      ctx.fillStyle = line.color || C.ui;
+      ctx.fillText(line.text, W / 2, y);
+      y += line.gap || 16;
+    }
+  }
+
+  function drawTitle() {
+    drawBg();
+    player.y = GROUND_Y - player.h;
+    drawPlayer();
+    ctx.fillStyle = C.overlay;
+    ctx.fillRect(0, 0, W, H);
+    drawCenteredText([
+      { text: "PIXEL RUNNER", font: "bold 22px Courier New, monospace", color: C.uiAccent, gap: 22 },
+      { text: "Dodge obstacles. Grab coins & stars.", font: "10px Courier New, monospace", color: C.uiDim, gap: 14 },
+      { text: "ARROWS move  ·  SPACE jump", font: "11px Courier New, monospace", color: C.ui, gap: 20 },
+      { text: "PRESS SPACE TO START", font: "bold 12px Courier New, monospace", color: frame % 40 < 24 ? C.ui : C.uiDim, gap: 16 },
+    ], 90);
+  }
+
+  function drawGameOver() {
+    ctx.fillStyle = C.overlay;
+    ctx.fillRect(0, 0, W, H);
+    drawCenteredText([
+      { text: "GAME OVER", font: "bold 22px Courier New, monospace", color: C.playerBody, gap: 24 },
+      { text: "SCORE  " + totalScore(), font: "bold 14px Courier New, monospace", color: C.uiAccent, gap: 28 },
+      { text: "Press R / SPACE / ENTER", font: "11px Courier New, monospace", color: C.ui, gap: 14 },
+      { text: "to restart", font: "11px Courier New, monospace", color: C.uiDim, gap: 16 },
+    ], 100);
+  }
+
+  function loop() {
+    update();
+    ctx.imageSmoothingEnabled = false;
+    if (state === STATE.TITLE) {
+      scroll += 0.5;
+      drawTitle();
+    } else {
+      drawBg();
+      drawObstacles();
+      drawCollectibles();
+      drawPlayer();
+      drawUI();
+      if (state === STATE.OVER) drawGameOver();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  initStars();
+  initHills();
+  player.y = GROUND_Y - player.h;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
